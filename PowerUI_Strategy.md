@@ -6,6 +6,47 @@
 **Secondary renderer:** AppKit on Mac OS X 10.4 Tiger  
 **Design goal:** SwiftUI-like source ergonomics without depending on Apple's SwiftUI, AttributeGraph or modern OS frameworks
 
+**Document status:** implementation strategy; no framework code exists in this repository yet
+
+---
+
+# 0. Executive summary and feasibility gate
+
+PowerUI should begin as a small, testable declarative core rather than as a catalogue of SwiftUI APIs. The first useful vertical slice is:
+
+```text
+ViewBuilder -> description tree -> reconciliation -> layout -> AppKit mount
+       ^                                  |
+       +------------- @State -------------+
+```
+
+Before committing to the public syntax shown in this document, create a compiler probe for the exact SwiftPPC toolchain and verify:
+
+| Language/runtime feature | Required for proposed syntax | Fallback if unavailable |
+|---|---:|---|
+| associated types and generics | yes | no practical fallback; block the project |
+| closures and Objective-C interop | yes | no practical fallback; block the AppKit renderer |
+| property wrappers | for `@State`/`@Binding` | explicit `State`/`Binding` values |
+| result builders | for stack closure syntax | explicit tuple/array child initializers |
+| opaque result types (`some View`) | for SwiftUI-shaped `body` | type erasure at the public boundary |
+| `@main` | for application syntax | generated or handwritten startup glue |
+
+The probe must compile and run on the oldest supported target. Until it passes, examples using these features are design targets rather than confirmed source compatibility.
+
+The architecture has three firm constraints:
+
+1. `PowerUICore` must be testable without AppKit.
+2. AppKit objects and mutations remain confined to the main thread.
+3. Identity, ownership and invalidation semantics must be documented and tested before expanding the component API.
+
+## Non-goals for the first release
+
+- binary or behavioral compatibility with Apple SwiftUI;
+- private Apple frameworks or a general-purpose dependency graph;
+- multiple production renderers;
+- implicit animation, advanced navigation or exhaustive styling;
+- pixel-identical rendering across Tiger, Leopard and modern macOS.
+
 ---
 
 # 1. Goal
@@ -826,7 +867,7 @@ PowerUI state observes model callbacks:
 
 ```swift
 client.send(request) { result in
-    Dispatch.main {
+    MainQueue.async {
         self.messages.append(...)
     }
 }
@@ -1229,8 +1270,9 @@ PowerUI/
 
 Do this in order:
 
+0. pin the SwiftPPC compiler revision and run the feature probe from section 0;
 1. define geometry primitives (`Size`, `Rect`, `ProposedSize`);
-2. define `View`, primitive views and `ViewBuilder`;
+2. define `View`, primitive views and `ViewBuilder`, using only syntax proven by the probe;
 3. implement type-erased description tree;
 4. implement RenderNode and structural identity;
 5. implement reconciler using a `TestRenderer`;
@@ -1254,6 +1296,22 @@ Do this in order:
 23. add sheets/alerts/menus;
 24. dogfood with a PowerGPT chat prototype;
 25. profile G4 and fix allocations/layout invalidations before expanding API.
+
+## First vertical-slice acceptance criteria
+
+The Counter milestone is complete only when all of the following hold:
+
+- the compiler probe result and exact toolchain revision are recorded;
+- headless tests prove mount, no-op update, property update, replacement and unmount;
+- state survives reevaluation when identity is stable and resets when identity changes;
+- multiple state writes in one run-loop turn produce one reconciliation flush;
+- `VStack`, `HStack`, `Spacer`, padding and frame have deterministic layout tests;
+- a Leopard application renders native `Text` and `Button` controls and updates the count;
+- 10,000 repeated updates do not grow the mounted node or AppKit view counts;
+- mount/unmount stress testing shows no framework-owned retain cycle;
+- a debug build reports body evaluations, reconciliation operations and layout passes.
+
+This milestone deliberately excludes `List`, networking, navigation and animation.
 
 Do not implement animation, navigation or fancy styling until the Counter + Todo + Chat prototypes all survive repeated updates correctly.
 
